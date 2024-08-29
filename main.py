@@ -1,9 +1,15 @@
 import argparse
 import os
+import torch.nn as nn
+import numpy
 from solver import Solver
-from data_loader import get_loader
+#from data_loader import get_loader
+from patched_data_loader import get_loader
 from torch.backends import cudnn
 import random
+import cv2
+import predict
+from PIL import Image
 
 def main(config):
     cudnn.benchmark = True
@@ -34,6 +40,8 @@ def main(config):
 
     print(config)
         
+
+
     train_loader = get_loader(image_path=config.train_path,
                             image_size=config.image_size,
                             batch_size=config.batch_size,
@@ -60,7 +68,24 @@ def main(config):
     if config.mode == 'train':
         solver.train()
     elif config.mode == 'test':
-        solver.test()
+        testpath = "./dataset/test"
+        predict.make_predictions("./models/U_Net-200-0.0002-146-0.4566.pkl", testpath)      #update this part to include all images in the test folder
+
+    
+
+
+def create_labels():
+    original_GT = 'C:/Users/zerialadmin/Documents/Image_Segmentation/dataset/valid_GT/'
+    labeled_GT ='C:/Users/zerialadmin/Documents/Image_Segmentation/dataset/valid_GT_binary/'
+    if not os.path.exists(labeled_GT):
+        os.makedirs(labeled_GT)
+    paths = list(map(lambda x: os.path.join(original_GT, x), os.listdir(original_GT)))
+    for image_path in paths:
+        if image_path.endswith('.tif'):
+            image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+            _, binary_image = cv2.threshold(image, 0, 1, cv2.THRESH_BINARY)
+            cv2.imwrite(os.path.join(labeled_GT,image_path.split('/')[-1]), binary_image)
+            
 
 
 if __name__ == '__main__':
@@ -68,20 +93,20 @@ if __name__ == '__main__':
 
     
     # model hyper-parameters
-    parser.add_argument('--image_size', type=int, default=224)
+    parser.add_argument('--image_size', type=int, default=(1103, 744))
     parser.add_argument('--t', type=int, default=3, help='t for Recurrent step of R2U_Net or R2AttU_Net')
     
     # training hyper-parameters
-    parser.add_argument('--img_ch', type=int, default=3)
+    parser.add_argument('--img_ch', type=int, default=1)
     parser.add_argument('--output_ch', type=int, default=1)
     parser.add_argument('--num_epochs', type=int, default=100)
     parser.add_argument('--num_epochs_decay', type=int, default=70)
-    parser.add_argument('--batch_size', type=int, default=1)
+    parser.add_argument('--batch_size', type=int, default=64)
     parser.add_argument('--num_workers', type=int, default=8)
     parser.add_argument('--lr', type=float, default=0.0002)
     parser.add_argument('--beta1', type=float, default=0.5)        # momentum1 in Adam
     parser.add_argument('--beta2', type=float, default=0.999)      # momentum2 in Adam    
-    parser.add_argument('--augmentation_prob', type=float, default=0.4)
+    parser.add_argument('--augmentation_prob', type=float, default=0.0)
 
     parser.add_argument('--log_step', type=int, default=2)
     parser.add_argument('--val_step', type=int, default=2)
@@ -89,7 +114,7 @@ if __name__ == '__main__':
     # misc
     parser.add_argument('--mode', type=str, default='train')
     parser.add_argument('--model_type', type=str, default='U_Net', help='U_Net/R2U_Net/AttU_Net/R2AttU_Net')
-    parser.add_argument('--model_path', type=str, default='./models')
+    parser.add_argument('--model_path', type=str, default='./models/')
     parser.add_argument('--train_path', type=str, default='./dataset/train/')
     parser.add_argument('--valid_path', type=str, default='./dataset/valid/')
     parser.add_argument('--test_path', type=str, default='./dataset/test/')
@@ -98,4 +123,7 @@ if __name__ == '__main__':
     parser.add_argument('--cuda_idx', type=int, default=1)
 
     config = parser.parse_args()
+
+    #create_labels()
+
     main(config)
