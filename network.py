@@ -129,14 +129,18 @@ class Attention_block(nn.Module):
     def forward(self,g,x):
         g1 = self.W_g(g)
         x1 = self.W_x(x)
+        if g1.size() != x1.size():
+            x1 = F.interpolate(x1, size=g1.shape[2:])
         psi = self.relu(g1+x1)
         psi = self.psi(psi)
+        if psi.size() != x.size():
+            x = F.interpolate(x, size=psi.shape[2:])
 
         return x*psi
 
 
 class U_Net(nn.Module):
-    def __init__(self,img_ch=3,output_ch=1):
+    def __init__(self,img_ch=1,output_ch=1):
         super(U_Net,self).__init__()
         
         self.Maxpool = nn.MaxPool2d(kernel_size=2,stride=2)
@@ -160,7 +164,17 @@ class U_Net(nn.Module):
         self.Up_conv2 = conv_block(ch_in=128, ch_out=64)
 
         self.Conv_1x1 = nn.Conv2d(64,output_ch,kernel_size=1,stride=1,padding=0)
-
+        self.BottleNeck = nn.Sequential(
+            nn.Conv2d(1024, 1024, kernel_size=7, stride=1, padding=3, bias=True),
+            nn.BatchNorm2d(1024),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(1024, 1024, kernel_size=7, stride=1, padding=3, bias=True),
+            nn.BatchNorm2d(1024),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(1024, 1024, kernel_size=7, stride=1, padding=3, bias=True),
+            nn.BatchNorm2d(1024),
+            nn.ReLU(inplace=True)
+        )
 
     def forward(self,x):
         # encoding path
@@ -178,27 +192,36 @@ class U_Net(nn.Module):
         x5 = self.Maxpool(x4)
         x5 = self.Conv5(x5)
 
+        # bottleneck
+        x5 = self.BottleNeck(x5)
+        
+
         # decoding + concat path
         d5 = self.Up5(x5)
-        d5 = torch.cat((x4,d5),dim=1)
+        d5 = torch.nn.functional.interpolate(d5, size=x4.shape[2:])
+        d5 = torch.cat((x4, d5), dim=1)
         
         d5 = self.Up_conv5(d5)
         
         d4 = self.Up4(d5)
+        d4 = torch.nn.functional.interpolate(d4, size=x3.shape[2:])
         d4 = torch.cat((x3,d4),dim=1)
         d4 = self.Up_conv4(d4)
 
         d3 = self.Up3(d4)
+        d3 = torch.nn.functional.interpolate(d3, size=x2.shape[2:])
         d3 = torch.cat((x2,d3),dim=1)
         d3 = self.Up_conv3(d3)
 
         d2 = self.Up2(d3)
+        d2 = torch.nn.functional.interpolate(d2, size=x1.shape[2:])
         d2 = torch.cat((x1,d2),dim=1)
         d2 = self.Up_conv2(d2)
 
         d1 = self.Conv_1x1(d2)
 
-        return d1
+        return d1, x5
+        #return x, x1, x2, x3, x4, x5, d1, d2, d3, d4, d5
 
 
 class R2U_Net(nn.Module):

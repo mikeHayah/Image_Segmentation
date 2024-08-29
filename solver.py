@@ -10,7 +10,10 @@ import torch.nn.functional as F
 from evaluation import *
 from network import U_Net,R2U_Net,AttU_Net,R2AttU_Net
 import csv
+import torch.nn as nn
+from PIL import Image
 
+from torchvision.transforms import ToPILImage
 
 class Solver(object):
 	def __init__(self, config, train_loader, valid_loader, test_loader):
@@ -26,6 +29,7 @@ class Solver(object):
 		self.img_ch = config.img_ch
 		self.output_ch = config.output_ch
 		self.criterion = torch.nn.BCELoss()
+		#self.criterion2 = self.diceLoss()
 		self.augmentation_prob = config.augmentation_prob
 
 		# Hyper-parameters
@@ -51,17 +55,23 @@ class Solver(object):
 		self.model_type = config.model_type
 		self.t = config.t
 		self.build_model()
-
+	
+	def diceLoss(self, x, y):
+		intersection = torch.sum(x * y) + 1e-7
+		union = torch.sum(x) + torch.sum(y) + 1e-7
+		return 1 - 2 * intersection / union
+		
+			
 	def build_model(self):
 		"""Build generator and discriminator."""
 		if self.model_type =='U_Net':
-			self.unet = U_Net(img_ch=3,output_ch=1)
+			self.unet = U_Net(img_ch=1,output_ch=1)
 		elif self.model_type =='R2U_Net':
-			self.unet = R2U_Net(img_ch=3,output_ch=1,t=self.t)
+			self.unet = R2U_Net(img_ch=1,output_ch=1,t=self.t)
 		elif self.model_type =='AttU_Net':
-			self.unet = AttU_Net(img_ch=3,output_ch=1)
+			self.unet = AttU_Net(img_ch=1,output_ch=1)
 		elif self.model_type == 'R2AttU_Net':
-			self.unet = R2AttU_Net(img_ch=3,output_ch=1,t=self.t)
+			self.unet = R2AttU_Net(img_ch=1,output_ch=1,t=self.t)
 			
 
 		self.optimizer = optim.Adam(list(self.unet.parameters()),
@@ -96,14 +106,78 @@ class Solver(object):
 	def compute_accuracy(self,SR,GT):
 		SR_flat = SR.view(-1)
 		GT_flat = GT.view(-1)
-
 		acc = GT_flat.data.cpu()==(SR_flat.data.cpu()>0.5)
 
 	def tensor2img(self,x):
 		img = (x[:,0,:,:]>x[:,1,:,:]).float()
 		img = img*255
 		return img
+	
+	
+	def binning(self, x):
+		batch_size, channels, height, width = x.size()
+		x = x.view(batch_size, channels, height // 2, 2, width // 2, 2)
+		x = x.mean(dim=(3, 5))
+		return x
+	
+	def bin_gt(self, gt):
+		for i in range(4):
+			gt = self.binning(gt)
+		return gt
+		
+	def check_bin(self, gt, i):
+		# create the output path
+		output_path = './dataset/binned_mask/'
+		if not os.path.exists(output_path):
+			os.makedirs(output_path)
+		stretching = nn.Upsample(scale_factor=16)	
+		mask_stretched = stretching(gt)
+		for n in range(mask_stretched.shape[0]):
+			mask = mask_stretched[n, 0, :, :]
+			mask = mask.squeeze(0)
+			mask = mask.squeeze(0)
+			mask = mask - mask.min()
+			mask = mask / mask.max()
+			mask = ((mask) * 255).byte()
+			mask = mask.cpu().numpy()
+			mask = Image.fromarray(mask, mode='L')
+			k = i*64 + n
+			mask.save(os.path.join(output_path,"gt_"+str(k)+".tif"))	
 
+	def check_images(self, images, GT):
+		
+		# create the output path
+		output_path = './dataset/check_images/'
+		if not os.path.exists(output_path):
+			os.makedirs(output_path)
+		images_path = './dataset/check_images/images/'
+		if not os.path.exists(images_path):
+			os.makedirs(images_path)
+		gt_path = './dataset/check_images/gt/'
+		if not os.path.exists(gt_path):
+			os.makedirs(gt_path)	
+		to_pil = ToPILImage()	
+		for n in range(images.shape[0]):
+			image = images[n, 0, :, :]
+			image = image.squeeze(0)
+			#image = image.squeeze(0)
+			image = image - image.min()
+			image = image / image.max()
+			image = ((image) * 255).byte()
+			#image = image.cpu().numpy()
+			#image = Image.fromarray(image, mode='L')
+			image = to_pil(image)
+			image.save(os.path.join(images_path,"image_"+str(n)+".png"))
+			mask = GT[n, 0, :, :]
+			mask = mask.squeeze(0)
+			#mask = mask.squeeze(0)
+			mask = mask - mask.min()
+			mask = mask / mask.max()
+			mask = ((mask) * 255).byte()
+			#mask = mask.cpu().numpy()
+			#mask = Image.fromarray(mask, mode='L')
+			mask = to_pil(mask)
+			mask.save(os.path.join(gt_path,"gt_"+str(n)+".png"))
 
 	def train(self):
 		"""Train encoder, generator and discriminator."""
@@ -122,6 +196,8 @@ class Solver(object):
 			# Train for Encoder
 			lr = self.lr
 			best_unet_score = 0.
+			best_unet = None
+			best_epoch = 0
 			
 			for epoch in range(self.num_epochs):
 
@@ -136,35 +212,65 @@ class Solver(object):
 				JS = 0.		# Jaccard Similarity
 				DC = 0.		# Dice Coefficient
 				length = 0
+				
 
-				for i, (images, GT) in enumerate(self.train_loader):
-					# GT : Ground Truth
+				# check get item
+				#images_patches, GT_patches = self.train_loader.dataset.__getitem__(60)
+				
+				for i, (images_patches, GT_patches) in enumerate(self.train_loader):
+					for i in range(images_patches.size(1)):
+						images = images_patches[:, i, :, :, :]
+						GT = GT_patches[:, i, :, :, :]
+						images = images.to(self.device)
+						GT = GT.to(self.device)
+						
+						# check images and GT
+						# self.check_images(images, GT)
+					
+						# # check binning fuction
+						# gt_btlnek = self.bin_gt(GT)
+						# self.check_bin(gt_btlnek, i)
 
-					images = images.to(self.device)
-					GT = GT.to(self.device)
+						
+					
 
-					# SR : Segmentation Result
-					SR = self.unet(images)
-					SR_probs = F.sigmoid(SR)
-					SR_flat = SR_probs.view(SR_probs.size(0),-1)
+						# SR : Segmentation Result
+						SR, image_btlnek = self.unet(images)
+						SR_probs = F.sigmoid(SR)
+						SR_flat = SR_probs.view(SR_probs.size(0),-1)
 
-					GT_flat = GT.view(GT.size(0),-1)
-					loss = self.criterion(SR_flat,GT_flat)
-					epoch_loss += loss.item()
+						GT_flat = GT.view(GT.size(0),-1)
+						loss_byend = self.diceLoss(SR_flat,GT_flat)
+						#loss = self.criterion(SR_flat,GT_flat)
+						#epoch_loss += loss.item()
 
-					# Backprop + optimize
-					self.reset_grad()
-					loss.backward()
-					self.optimizer.step()
+						# find loose at bottle neck
+						gt_btlnek = self.bin_gt(GT)
+					
+						conv = nn.Conv2d(1024, 1, kernel_size=1)
+						image_btlnek = conv(image_btlnek)
+						img_probs = F.sigmoid(image_btlnek)
+						loss_btlnek = self.diceLoss(img_probs.view(img_probs.size(0), -1), gt_btlnek.view(gt_btlnek.size(0), -1))
+					
+						# calculate full loss
+						loss_ratio = 0.5
+						loss = (1-loss_ratio)*loss_byend + loss_ratio*loss_btlnek
+						epoch_loss += (1-loss_ratio)*loss_byend.item() + loss_ratio*loss_btlnek.item()
+					
 
-					acc += get_accuracy(SR,GT)
-					SE += get_sensitivity(SR,GT)
-					SP += get_specificity(SR,GT)
-					PC += get_precision(SR,GT)
-					F1 += get_F1(SR,GT)
-					JS += get_JS(SR,GT)
-					DC += get_DC(SR,GT)
-					length += images.size(0)
+						# Backprop + optimize
+						self.reset_grad()
+						loss.backward()
+						self.optimizer.step()
+
+						acc += get_accuracy(SR,GT)
+						SE += get_sensitivity(SR,GT)
+						SP += get_specificity(SR,GT)
+						PC += get_precision(SR,GT)
+						F1 += get_F1(SR,GT)
+						JS += get_JS(SR,GT)
+						DC += get_DC(SR,GT)
+						length += images.size(0)
 
 				acc = acc/length
 				SE = SE/length
@@ -203,19 +309,25 @@ class Solver(object):
 				DC = 0.		# Dice Coefficient
 				length=0
 				for i, (images, GT) in enumerate(self.valid_loader):
-
-					images = images.to(self.device)
-					GT = GT.to(self.device)
-					SR = F.sigmoid(self.unet(images))
-					acc += get_accuracy(SR,GT)
-					SE += get_sensitivity(SR,GT)
-					SP += get_specificity(SR,GT)
-					PC += get_precision(SR,GT)
-					F1 += get_F1(SR,GT)
-					JS += get_JS(SR,GT)
-					DC += get_DC(SR,GT)
+					for i in range(images_patches.size(1)):
+						images = images_patches[:, i, :, :, :]
+						GT = GT_patches[:, i, :, :, :]
+						images = images.to(self.device)
+						GT = GT.to(self.device)
 						
-					length += images.size(0)
+						images = images.to(self.device)
+						GT = GT.to(self.device)
+						SR, _ = self.unet(images)
+						SR = F.sigmoid(SR)
+						acc += get_accuracy(SR,GT)
+						SE += get_sensitivity(SR,GT)
+						SP += get_specificity(SR,GT)
+						PC += get_precision(SR,GT)
+						F1 += get_F1(SR,GT)
+						JS += get_JS(SR,GT)
+						DC += get_DC(SR,GT)
+						
+						length += images.size(0)
 					
 				acc = acc/length
 				SE = SE/length
@@ -242,7 +354,7 @@ class Solver(object):
 
 
 				# Save Best U-Net model
-				if unet_score > best_unet_score:
+				if unet_score >= best_unet_score:
 					best_unet_score = unet_score
 					best_epoch = epoch
 					best_unet = self.unet.state_dict()
@@ -251,7 +363,8 @@ class Solver(object):
 					
 			#===================================== Test ====================================#
 			del self.unet
-			del best_unet
+			if best_unet is not None:
+				del best_unet
 			self.build_model()
 			self.unet.load_state_dict(torch.load(unet_path))
 			
@@ -267,19 +380,26 @@ class Solver(object):
 			DC = 0.		# Dice Coefficient
 			length=0
 			for i, (images, GT) in enumerate(self.valid_loader):
+				
+				for i in range(images_patches.size(1)):
+						images = images_patches[:, i, :, :, :]
+						GT = GT_patches[:, i, :, :, :]
+						images = images.to(self.device)
+						GT = GT.to(self.device)
 
-				images = images.to(self.device)
-				GT = GT.to(self.device)
-				SR = F.sigmoid(self.unet(images))
-				acc += get_accuracy(SR,GT)
-				SE += get_sensitivity(SR,GT)
-				SP += get_specificity(SR,GT)
-				PC += get_precision(SR,GT)
-				F1 += get_F1(SR,GT)
-				JS += get_JS(SR,GT)
-				DC += get_DC(SR,GT)
+						images = images.to(self.device)
+						GT = GT.to(self.device)
+						SR, _ = self.unet(images)
+						SR = F.sigmoid(SR)
+						acc += get_accuracy(SR,GT)
+						SE += get_sensitivity(SR,GT)
+						SP += get_specificity(SR,GT)
+						PC += get_precision(SR,GT)
+						F1 += get_F1(SR,GT)
+						JS += get_JS(SR,GT)
+						DC += get_DC(SR,GT)
 						
-				length += images.size(0)
+						length += images.size(0)
 					
 			acc = acc/length
 			SE = SE/length
