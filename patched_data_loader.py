@@ -110,6 +110,6 @@ class PatchImageFolder(ImageFolder):
 def get_loader(image_path, image_size, batch_size, num_workers=2, mode='train',augmentation_prob=0.4):
 	"""Builds and returns Dataloader."""
 	
-	dataset = PatchImageFolder(root = image_path, patch_size=128, stride=32, mode=mode , augmentation_prob=augmentation_prob) 
+	dataset = PatchImageFolder(root = image_path, patch_size=256, stride=128, mode=mode , augmentation_prob=augmentation_prob) 
 	data_loader = data.DataLoader(dataset=dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
 	return data_loader

@@ -55,6 +55,9 @@ class Solver(object):
 		self.model_type = config.model_type
 		self.t = config.t
 		self.build_model()
+		
+		# addtional 
+		self.BottleNeck_size = 512
 	
 	def diceLoss(self, x, y):
 		intersection = torch.sum(x * y) + 1e-7
@@ -121,17 +124,17 @@ class Solver(object):
 		return x
 	
 	def bin_gt(self, gt):
-		for i in range(4):
+		for i in range(3):
 			gt = self.binning(gt)
 		return gt
 		
-	def check_bin(self, gt, i):
+	def check_bin(self, bn_gt, original_gt, i):
 		# create the output path
 		output_path = './dataset/binned_mask/'
 		if not os.path.exists(output_path):
 			os.makedirs(output_path)
 		stretching = nn.Upsample(scale_factor=16)	
-		mask_stretched = stretching(gt)
+		mask_stretched = stretching(bn_gt)
 		for n in range(mask_stretched.shape[0]):
 			mask = mask_stretched[n, 0, :, :]
 			mask = mask.squeeze(0)
@@ -142,7 +145,17 @@ class Solver(object):
 			mask = mask.cpu().numpy()
 			mask = Image.fromarray(mask, mode='L')
 			k = i*64 + n
-			mask.save(os.path.join(output_path,"gt_"+str(k)+".tif"))	
+			mask.save(os.path.join(output_path,"maskgt_"+str(k)+".tif"))
+			gt = original_gt[n, 0, :, :]
+			gt = gt.squeeze(0)
+			gt = gt.squeeze(0)
+			gt = gt - gt.min()
+			gt = gt / gt.max()
+			gt = ((gt) * 255).byte()
+			gt = gt.cpu().numpy()
+			gt = Image.fromarray(gt, mode='L')
+			k = i*64 + n
+			gt.save(os.path.join(output_path,"gt_"+str(k)+".tif"))
 
 	def check_images(self, images, GT):
 		
@@ -224,12 +237,12 @@ class Solver(object):
 						images = images.to(self.device)
 						GT = GT.to(self.device)
 						
-						# check images and GT
+						# # check images and GT
 						# self.check_images(images, GT)
 					
 						# # check binning fuction
 						# gt_btlnek = self.bin_gt(GT)
-						# self.check_bin(gt_btlnek, i)
+						# self.check_bin(gt_btlnek, GT, i)
 
 						
 					
@@ -247,13 +260,13 @@ class Solver(object):
 						# find loose at bottle neck
 						gt_btlnek = self.bin_gt(GT)
 					
-						conv = nn.Conv2d(1024, 1, kernel_size=1)
-						image_btlnek = conv(image_btlnek)
+						conv = nn.Conv2d(self.BottleNeck_size, 1, kernel_size=1).to(self.device)
+						image_btlnek = conv(image_btlnek.to(self.device))
 						img_probs = F.sigmoid(image_btlnek)
 						loss_btlnek = self.diceLoss(img_probs.view(img_probs.size(0), -1), gt_btlnek.view(gt_btlnek.size(0), -1))
 					
 						# calculate full loss
-						loss_ratio = 0.5
+						loss_ratio = 0.75
 						loss = (1-loss_ratio)*loss_byend + loss_ratio*loss_btlnek
 						epoch_loss += (1-loss_ratio)*loss_byend.item() + loss_ratio*loss_btlnek.item()
 					

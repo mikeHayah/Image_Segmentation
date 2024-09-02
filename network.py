@@ -175,6 +175,18 @@ class U_Net(nn.Module):
             nn.BatchNorm2d(1024),
             nn.ReLU(inplace=True)
         )
+        self.BottleNeckd2 = nn.Sequential(
+            nn.Conv2d(1024, 1024, kernel_size=7, dilation=2, stride=1, padding=6, bias=True),
+            nn.BatchNorm2d(1024),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(1024, 1024, kernel_size=7, dilation=2,stride=1, padding=6, bias=True),
+            nn.BatchNorm2d(1024),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(1024, 1024, kernel_size=7, dilation=2,stride=1, padding=6, bias=True),
+            nn.BatchNorm2d(1024),
+            nn.ReLU(inplace=True)
+        )
+        self.fuse = nn.Conv2d(2 * 1024, 1024, kernel_size=1)
 
     def forward(self,x):
         # encoding path
@@ -192,8 +204,13 @@ class U_Net(nn.Module):
         x5 = self.Maxpool(x4)
         x5 = self.Conv5(x5)
 
-        # bottleneck
-        x5 = self.BottleNeck(x5)
+        # # bottleneck
+        # x5 = self.BottleNeck(x5)
+        
+        # use Atrous pyramid
+        x5_1 = self.BottleNeck(x5)
+        x5_2 = self.BottleNeckd2(x5)
+        x5 = self.fuse(torch.cat([x5_1, x5_2], dim=1))
         
 
         # decoding + concat path
@@ -255,6 +272,30 @@ class R2U_Net(nn.Module):
         self.Up_RRCNN2 = RRCNN_block(ch_in=128, ch_out=64,t=t)
 
         self.Conv_1x1 = nn.Conv2d(64,output_ch,kernel_size=1,stride=1,padding=0)
+        BottleNeck_size = 512
+        self.BottleNeck = nn.Sequential(
+            nn.Conv2d(BottleNeck_size, BottleNeck_size, kernel_size=7, stride=1, padding=3, bias=True),
+            nn.BatchNorm2d(BottleNeck_size),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(BottleNeck_size, BottleNeck_size, kernel_size=7, stride=1, padding=3, bias=True),
+            nn.BatchNorm2d(BottleNeck_size),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(BottleNeck_size, BottleNeck_size, kernel_size=7, stride=1, padding=3, bias=True),
+            nn.BatchNorm2d(BottleNeck_size),
+            nn.ReLU(inplace=True)
+        )
+        self.BottleNeckd2 = nn.Sequential(
+            nn.Conv2d(BottleNeck_size, BottleNeck_size, kernel_size=7, dilation=2, stride=1, padding=6, bias=True),
+            nn.BatchNorm2d(BottleNeck_size),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(BottleNeck_size, BottleNeck_size, kernel_size=7, dilation=2,stride=1, padding=6, bias=True),
+            nn.BatchNorm2d(BottleNeck_size),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(BottleNeck_size, BottleNeck_size, kernel_size=7, dilation=2,stride=1, padding=6, bias=True),
+            nn.BatchNorm2d(BottleNeck_size),
+            nn.ReLU(inplace=True)
+        )
+        self.fuse = nn.Conv2d(2 * BottleNeck_size, BottleNeck_size, kernel_size=1)
 
 
     def forward(self,x):
@@ -270,15 +311,22 @@ class R2U_Net(nn.Module):
         x4 = self.Maxpool(x3)
         x4 = self.RRCNN4(x4)
 
-        x5 = self.Maxpool(x4)
-        x5 = self.RRCNN5(x5)
+        # x5 = self.Maxpool(x4)
+        # x5 = self.RRCNN5(x5)
+        
+        # use Atrous pyramid
+        x4_1 = self.BottleNeck(x4)
+        x4_2 = self.BottleNeckd2(x4)
+        x4 = self.fuse(torch.cat([x4_1, x4_2], dim=1))
+        d4 = self.Up4(x4)
+        
 
         # decoding + concat path
-        d5 = self.Up5(x5)
-        d5 = torch.cat((x4,d5),dim=1)
-        d5 = self.Up_RRCNN5(d5)
+        # d5 = self.Up5(x5)
+        # d5 = torch.cat((x4,d5),dim=1)
+        # d5 = self.Up_RRCNN5(d5)
         
-        d4 = self.Up4(d5)
+        # d4 = self.Up4(d5)
         d4 = torch.cat((x3,d4),dim=1)
         d4 = self.Up_RRCNN4(d4)
 
@@ -292,7 +340,7 @@ class R2U_Net(nn.Module):
 
         d1 = self.Conv_1x1(d2)
 
-        return d1
+        return d1, x4
 
 
 

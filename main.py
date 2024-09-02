@@ -9,6 +9,7 @@ from torch.backends import cudnn
 import random
 import cv2
 import predict
+import predict_patched
 from PIL import Image
 
 def main(config):
@@ -34,7 +35,7 @@ def main(config):
     decay_epoch = int(epoch*decay_ratio)
 
     config.augmentation_prob = augmentation_prob
-    config.num_epochs = epoch
+    config.num_epochs = 200 #epoch
     config.lr = lr
     config.num_epochs_decay = decay_epoch
 
@@ -69,7 +70,7 @@ def main(config):
         solver.train()
     elif config.mode == 'test':
         testpath = "./dataset/test"
-        predict.make_predictions("./models/U_Net-200-0.0002-146-0.4566.pkl", testpath)      #update this part to include all images in the test folder
+        predict_patched.make_predictions("./models/U_Net-200-0.0002-6-0.2176.pkl", testpath)      #update this part to include all images in the test folder
 
     
 
@@ -101,8 +102,8 @@ if __name__ == '__main__':
     parser.add_argument('--output_ch', type=int, default=1)
     parser.add_argument('--num_epochs', type=int, default=100)
     parser.add_argument('--num_epochs_decay', type=int, default=70)
-    parser.add_argument('--batch_size', type=int, default=64)
-    parser.add_argument('--num_workers', type=int, default=8)
+    parser.add_argument('--batch_size', type=int, default=32)
+    parser.add_argument('--num_workers', type=int, default=4)
     parser.add_argument('--lr', type=float, default=0.0002)
     parser.add_argument('--beta1', type=float, default=0.5)        # momentum1 in Adam
     parser.add_argument('--beta2', type=float, default=0.999)      # momentum2 in Adam    
@@ -113,7 +114,7 @@ if __name__ == '__main__':
 
     # misc
     parser.add_argument('--mode', type=str, default='train')
-    parser.add_argument('--model_type', type=str, default='U_Net', help='U_Net/R2U_Net/AttU_Net/R2AttU_Net')
+    parser.add_argument('--model_type', type=str, default='R2U_Net', help='U_Net/R2U_Net/AttU_Net/R2AttU_Net')
     parser.add_argument('--model_path', type=str, default='./models/')
     parser.add_argument('--train_path', type=str, default='./dataset/train/')
     parser.add_argument('--valid_path', type=str, default='./dataset/valid/')
