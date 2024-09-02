@@ -90,6 +90,7 @@ def create_labels():
 
 
 if __name__ == '__main__':
+    torch.cuda.empty_cache()
     parser = argparse.ArgumentParser()
 
     
